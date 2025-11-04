@@ -90,7 +90,7 @@ def server_thread():
             data, addr = sock.recvfrom(1024)
             threading.Thread(target=handle_message, args=(data, addr, sock)).start()
     except KeyboardInterrupt:
-        print("\n[SERVER] Shutting down gracefully...")
+        print("\n[SERVER] Shutting down")
         sock.close()
         save_db()
         print("[SERVER] Database saved. Goodbye!")
