@@ -4,39 +4,44 @@ import json
 import os
 
 SERVER_IP = "127.0.0.1"
-SERVER_PORT = 5000 
-DB_FILE = "registered_peers.json" #database for the registered peers
+SERVER_PORT = 5000
+DB_FILE = "registered_peers.json"
 
-lock = threading.Lock() #only one thread can write to the file
+lock = threading.Lock()
 
-#Load persistent registration
-if os.path.exists(DB_FILE): #checks if the file (database) exists
+# Load persistent peer data
+if os.path.exists(DB_FILE):
     with open(DB_FILE, "r") as f:
         peers = json.load(f)
 else:
-    peers = {} #starts with empty dictionary
+    peers = {}
 
-#function to save registered peers
+
+#saving to json database
 def save_db():
-    with lock:
+    #Save the current peer dictionary to disk
+    try:
         with open(DB_FILE, "w") as f:
             json.dump(peers, f, indent=4)
+    except Exception as e:
+        print(f"[SERVER] Error saving database: {e}")
 
-#function that handles one incoming UDP message from client
+
+#function for handling messages
 def handle_message(data, addr, sock):
     msg = data.decode().strip().split()
     if not msg:
         return
+
     cmd = msg[0].upper()
 
-    #handles registration
+    # Handle registration
     if cmd == "REGISTER":
-        #getting format: REGISTER RQ# Name Role IP UDP_PORT TCP_PORT Storage
         if len(msg) != 8:
-            reply = f"REGISTER-DENIED {msg[1] if len(msg)>1 else 0} Invalid_Format"
+            reply = f"REGISTER-DENIED {msg[1] if len(msg) > 1 else 0} Invalid_Format"
             sock.sendto(reply.encode(), addr)
             return
-        
+
         _, rq, name, role, ip, udp_port, tcp_port, storage = msg
 
         with lock:
@@ -48,17 +53,16 @@ def handle_message(data, addr, sock):
                     "IP": ip,
                     "UDP_Port": udp_port,
                     "TCP_Port": tcp_port,
-                    "Storage": storage
-                }    
+                    "Storage": storage,
+                }
                 save_db()
                 reply = f"REGISTERED {rq}"
 
         print(f"[SERVER] {name} -> {reply}")
         sock.sendto(reply.encode(), addr)
 
-    #handles de-registration
+    # Handle de-registration
     elif cmd == "DE-REGISTER":
-        #getting format: DE-REGISTER RQ# Name
         if len(msg) != 3:
             return
         _, rq, name = msg
@@ -67,20 +71,30 @@ def handle_message(data, addr, sock):
                 del peers[name]
                 save_db()
                 print(f"[SERVER] {name} deregistered.")
+                sock.sendto(f"DE-REGISTERED {rq}".encode(), addr)
             else:
-                print(f"[SERVER] Unknown peer {name} tried to deregistered.")
+                print(f"[SERVER] Unknown peer {name} tried to deregister.")
+
     else:
         print(f"[SERVER] Unknown command from {addr}: {data.decode().strip()}")
 
+
 def server_thread():
+    #Main UDP server loop
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind((SERVER_IP, SERVER_PORT))
     print(f"[SERVER] Running on {SERVER_IP}:{SERVER_PORT}")
 
-    while True:
-        data, addr = sock.recvfrom(1024)
-        threading.Thread(target=handle_message, args=(data, addr, sock)).start()
+    try:
+        while True:
+            data, addr = sock.recvfrom(1024)
+            threading.Thread(target=handle_message, args=(data, addr, sock)).start()
+    except KeyboardInterrupt:
+        print("\n[SERVER] Shutting down gracefully...")
+        sock.close()
+        save_db()
+        print("[SERVER] Database saved. Goodbye!")
+
 
 if __name__ == "__main__":
     server_thread()
-
