@@ -2,6 +2,7 @@ import socket
 import threading
 import json
 import os
+import zlib
 
 SERVER_IP = "127.0.0.1"
 SERVER_PORT = 5000
@@ -26,6 +27,76 @@ def save_db():
     except Exception as e:
         print(f"[SERVER] Error saving database: {e}")
 
+def handleRegistration(msg,addr,sock):
+    
+    print("At handleRegistration")
+    if len(msg) != 8:
+        reply = f"REGISTER-DENIED {msg[1] if len(msg) > 1 else 0} Invalid_Format"
+        sock.sendto(reply.encode(), addr)
+        return
+    
+    elif msg[3].lower() not in ["owner", "storage", "both"]:
+        reply = f"REGISTER-DENIED : Invalid_Role"
+        sock.sendto(reply.encode(), addr)
+        return
+    
+    
+    _, rq, name, role, ip, udp_port, tcp_port, storage = msg
+
+    with lock:
+       
+        global peers
+        if name in peers:
+            reply = f"REGISTER-DENIED {rq} NameAlreadyInUse"
+        else:
+            peers[name] = {
+                "Role": role,
+                "IP": ip,
+                "UDP_Port": udp_port,
+                "TCP_Port": tcp_port,
+                "Storage": storage,
+            }
+            save_db()
+            reply = f"REGISTERED {rq}"
+
+    print(f"[SERVER] {name} -> {reply}")
+    sock.sendto(reply.encode(), addr)
+
+def handleDeregistration(msg, addr, sock):
+    print("At handleDeregistration")
+    if len(msg) != 3:
+        reply = f"DE-REGISTER-DENIED {msg[1] if len(msg) > 1 else 0} Invalid_Format"
+        sock.sendto(reply.encode(), addr)
+        return
+
+    _, rq, name = msg
+
+    with lock:
+        if name in peers:
+            del peers[name]
+            save_db()
+            reply = f"DE-REGISTERED {rq}"
+            print(f"[SERVER] {name} deregistered.")
+        else:
+            reply = f"DE-REGISTER-DENIED {rq} Unknown_Peer"
+            print(f"[SERVER] Unknown peer {name} tried to deregister.")
+
+    sock.sendto(reply.encode(), addr)
+
+def handleBackupRequest(msg, addr, sock):
+    print("[SERVER] Handling Backup-Request: ", msg)
+    if len(msg) != 5:
+        reply = f"BACKUP-DENIED {msg[1] if len(msg) > 1 else 0} Invalid_Format"
+        sock.sendto(reply.encode(), addr)
+        return
+    
+    msgWithoutCRC = ' '.join(msg[:-1])
+    calculated_crc = zlib.crc32(msgWithoutCRC.encode()) & 0xFFFFFFFF
+    if str(calculated_crc) == msg[-1]:
+        print("[SERVER] CRC32 Check Passed")
+
+    _, name, filename, size, received_crc = msg
+
 
 #function for handling messages
 def handle_message(data, addr, sock):
@@ -34,49 +105,25 @@ def handle_message(data, addr, sock):
         return
 
     cmd = msg[0].upper()
+    print("At handle_message and cmd received is:", cmd)
 
     # Handle registration
-    if cmd == "REGISTER":
-        if len(msg) != 8:
-            reply = f"REGISTER-DENIED {msg[1] if len(msg) > 1 else 0} Invalid_Format"
-            sock.sendto(reply.encode(), addr)
-            return
-
-        _, rq, name, role, ip, udp_port, tcp_port, storage = msg
-
-        with lock:
-            if name in peers:
-                reply = f"REGISTER-DENIED {rq} NameAlreadyInUse"
-            else:
-                peers[name] = {
-                    "Role": role,
-                    "IP": ip,
-                    "UDP_Port": udp_port,
-                    "TCP_Port": tcp_port,
-                    "Storage": storage,
-                }
-                save_db()
-                reply = f"REGISTERED {rq}"
-
-        print(f"[SERVER] {name} -> {reply}")
-        sock.sendto(reply.encode(), addr)
+    match cmd:
+        case "REGISTER":
+            print("At REGISTER case")
+            handleRegistration(msg,addr,sock)
 
     # Handle de-registration
-    elif cmd == "DE-REGISTER":
-        if len(msg) != 3:
-            return
-        _, rq, name = msg
-        with lock:
-            if name in peers:
-                del peers[name]
-                save_db()
-                print(f"[SERVER] {name} deregistered.")
-                sock.sendto(f"DE-REGISTERED {rq}".encode(), addr)
-            else:
-                print(f"[SERVER] Unknown peer {name} tried to deregister.")
+        case "DE-REGISTER":
+            print("At DE-REGISTER case")
+            handleDeregistration(msg, addr, sock)
 
-    else:
-        print(f"[SERVER] Unknown command from {addr}: {data.decode().strip()}")
+        case "BACKUP-REQUEST":
+            handleBackupRequest(msg, addr, sock)
+        case _:
+            print(f"[SERVER] Unknown command from {addr}: {data.decode().strip()}")
+            sock.sendto(f"ERROR Unknown_Command".encode(), addr)
+
 
 
 def server_thread():

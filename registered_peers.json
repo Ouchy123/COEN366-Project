@@ -1,1 +1,16 @@
-{}
+{
+    "Moha": {
+        "Role": "Oubagha",
+        "IP": "127.0.0.1",
+        "UDP_Port": "50798",
+        "TCP_Port": "59116",
+        "Storage": "1000"
+    },
+    "Moh": {
+        "Role": "both",
+        "IP": "127.0.0.1",
+        "UDP_Port": "59868",
+        "TCP_Port": "55406",
+        "Storage": "1024"
+    }
+}
