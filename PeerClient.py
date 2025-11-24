@@ -3,6 +3,7 @@ import threading
 import os
 import sys
 import zlib
+import time
 
 SERVER_IP = "127.0.0.1"
 SERVER_PORT = 5000
@@ -16,45 +17,52 @@ class Peer:
         self.udp_port = udp_port
         self.tcp_port = tcp_port
         self.storage = storage
-        # Create UDP and TCP sockets
+
+        # UDP socket
         self.UDP_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.UDP_sock.bind((self.ip, self.udp_port))
         self.UDP_sock.settimeout(60.0)
 
+        # TCP socket
         self.TCP_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.TCP_sock.bind((self.ip, self.tcp_port))
-        self.TCP_sock.settimeout(60.0)
 
         self.running = True
         self.registered = False
-        self.reqNum = (name,0)
+        self.reqNum = (name, 0)
 
+    
+    # UDP listener (RESTORE_PLAN handled here)
     def listen_UDP_responses(self):
-        #Continuously listen for server responses
         while self.running:
             try:
-                print( "\nListening for UDP responses..." )
+                print("\nListening for UDP responses...")
                 data, _ = self.UDP_sock.recvfrom(1024)
-                print(f"\n[CLIENT] Received: {data.decode().strip()}")
+                message = data.decode().strip()
+                print(f"\n[CLIENT] Received: {message}")
+
+                decoded = message.split()
+
+                # RESTORE PLAN handling
+                if decoded[0] == "RESTORE_PLAN":
+                    _, rq, filename, peer_list_raw = decoded
+                    peer_list = peer_list_raw.strip("[]").split(",")
+
+                    print(f"[CLIENT] Restore plan received. Peers: {peer_list}")
+
+                    self.download_chunks(filename, peer_list)
+
             except socket.timeout:
                 continue
-            except Exception:
+            except Exception as e:
+                print("[CLIENT] UDP Listener Error:", e)
                 break
 
     def listen_TCP_responses(self):
-        #Continuously listen for server responses
-        while self.running:
-            try:
-                print( "\nListening for TCP responses..." )
-                self.data, _ = self.TCP_sock.recvfrom(1024)
-                print(f"\n[CLIENT] Received: {data.decode().strip()}")
-            except socket.timeout:
-                continue
-            except Exception:
-                break
+        pass
 
+    
     def register(self):
-        #Register this peer with the server
         if self.registered:
             print("[CLIENT] Already registered.")
             return
@@ -63,8 +71,8 @@ class Peer:
         print(f"[CLIENT] Sent: {msg}")
         self.registered = True
 
+    
     def deregister(self):
-        #Remove this peer from the server
         if not self.registered:
             print("[CLIENT] You are not registered.")
             return
@@ -73,15 +81,21 @@ class Peer:
         print(f"[CLIENT] Sent: {msg}")
         self.registered = False
 
+   
     def get_status(self):
-        status = {"Name": self.name, "Role": self.role,
-                  "UDP_Port": self.udp_port, "TCP_Port": self.tcp_port,
-                  "Storage": self.storage, "Registered": self.registered}
+        status = {
+            "Name": self.name,
+            "Role": self.role,
+            "UDP_Port": self.udp_port,
+            "TCP_Port": self.tcp_port,
+            "Storage": self.storage,
+            "Registered": self.registered,
+        }
         print(f"[CLIENT] Status: {status}")
         return status
+
     
     def exit(self):
-        #Close connections and exit
         if self.registered:
             self.deregister()
         print("[CLIENT] Exiting...")
@@ -89,96 +103,169 @@ class Peer:
         self.UDP_sock.close()
         self.TCP_sock.close()
 
-
-    #Backup Requests:
+   
+    # BACKUP
+    
     def backup_request(self):
-        while(True):
+        while True:
             path = input("Enter the file path to back up: ").strip()
+
             if os.path.isfile(path):
-                print("File found:", path , "\nStarting backup process...")
+                print("File found:", path, "\nStarting backup process...")
                 size = os.path.getsize(path)
+
                 msg = f"BACKUP-REQUEST {self.name} {os.path.basename(path)} {size}"
                 msg = msg + f" {self.crc32_backup(msg.encode())}"
-                print("we are in the backup request and here is the message: ", msg)
 
+                print("[CLIENT] Sending backup request:", msg)
                 self.UDP_sock.sendto(msg.encode(), (SERVER_IP, SERVER_PORT))
                 break
+
             elif path.lower() == "exit":
                 print("Exiting backup request.")
                 break
+
             else:
                 print("File not found")
 
-    def crc32_backup(self, msg:bytes):
+   
+    # RESTORE REQUEST
+    
+    def restore_request(self):
+        filename = input("Enter filename to restore: ").strip()
+        rq = self.reqNum[1]
+        msg = f"RESTORE_REQ {rq} {filename}"
+        self.UDP_sock.sendto(msg.encode(), (SERVER_IP, SERVER_PORT))
+        print(f"[CLIENT] Sent: {msg}")
+
+    
+    def crc32_backup(self, msg: bytes):
         return zlib.crc32(msg) & 0xFFFFFFFF
 
-    def run(self):
-        #Main command loop for the peer
-        UDP_listener = threading.Thread(target=self.listen_UDP_responses, daemon=True)
-        UDP_listener.start()
+   
+    # HEARTBEAT
+    
+    def send_heartbeat(self):
+        while self.running:
+            if self.registered:
+                ts = int(time.time())
+                msg = f"HEARTBEAT {self.reqNum[1]} {self.name} 0 {ts}"
+                try:
+                    self.UDP_sock.sendto(msg.encode(), (SERVER_IP, SERVER_PORT))
+                    print(f"[CLIENT] Sent heartbeat: {msg}")
+                except:
+                    pass
+            time.sleep(5)
 
-        TCP_listener = threading.Thread(target=self.listen_TCP_responses, daemon=True)
-        TCP_listener.start()
+    
+    # TCP chunk downloader (temporary stub)
+    
+    def download_chunks(self, filename, peer_list):
+        print(f"[CLIENT] Starting file restore for: {filename}")
+        print(f"[CLIENT] (TEMP) Not actually downloading chunks yet.")
+        print(f"[CLIENT] Would connect to peers: {peer_list}")
+        print("[CLIENT] Restore complete (stub).")
+
+    
+    # TCP server for storage peers
+    
+    def start_storage_TCP_server(self):
+        self.TCP_sock.listen()
+
+        while True:
+            conn, addr = self.TCP_sock.accept()
+            threading.Thread(
+                target=self.handle_TCP_chunk_request,
+                args=(conn,),
+                daemon=True,
+            ).start()
+
+
+    def handle_TCP_chunk_request(self, conn):
+        header = conn.recv(1024).decode().strip().split()
+        _, rq, filename, chunk_id = header
+
+        chunk_path = f"chunks/{filename}_chunk{chunk_id}"
+
+        if not os.path.exists(chunk_path):
+            print(f"[CLIENT] Missing chunk: {chunk_path}")
+            conn.close()
+            return
+
+        with open(chunk_path, "rb") as f:
+            data = f.read()
+
+        checksum = zlib.crc32(data) & 0xFFFFFFFF
+        response_header = f"CHUNK_DATA {rq} {filename} {chunk_id} {checksum}\n"
+
+        conn.sendall(response_header.encode() + data)
+        conn.close()
+
+   
+    def run(self):
+        # Start threads
+        threading.Thread(target=self.listen_UDP_responses, daemon=True).start()
+        threading.Thread(target=self.start_storage_TCP_server, daemon=True).start()
+        threading.Thread(target=self.send_heartbeat, daemon=True).start()
 
         print(f"\n[CLIENT] Peer '{self.name}' is active.")
         print("[CLIENT] Available commands:")
-        print("  register   → register this peer with the server")
-        print("  deregister → remove this peer from the server")
-        print("  status     → show peer info")
-        print("  exit       → close connection and quit\n")
+        print("  register")
+        print("  deregister")
+        print("  status")
+        print("  backup")
+        print("  restore")
+        print("  exit\n")
 
         while self.running:
-            cmd = input("\nEnter the command you would like to execute:\n1)Register\n2)Deregister\n3)Status\n4)Backup\n5)Exit\nCommand:").strip().lower()
-            match cmd.lower():
+            cmd = input("Command: ").strip().lower()
+
+            match cmd:
                 case "register":
                     self.register()
-
                 case "deregister":
                     self.deregister()
-
                 case "status":
                     self.get_status()
-
-                case "exit":
-                    self.exit()
-                
                 case "backup":
                     self.backup_request()
-
+                case "restore":
+                    self.restore_request()
+                case "exit":
+                    self.exit()
                 case _:
-                    print("[CLIENT] Unknown command. Try again among the commands mentionned:")
+                    print("[CLIENT] Unknown command.")
+
+
 
 def get_free_TCP_port():
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(("", 0))
-        print("--- Free TCP Port:", s.getsockname()[1])
         return s.getsockname()[1]
+
 
 def get_free_UDP_port():
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
         s.bind(("", 0))
-        print("--- Free UDP Port:", s.getsockname()[1])
         return s.getsockname()[1]
-    
+
+
+
 if __name__ == "__main__":
-    # Find free ports
     UDP_PORT = get_free_UDP_port()
     TCP_PORT = get_free_TCP_port()
-    
 
-    credentials = (input("Enter credentials (format: Name Role): ")).split()
+    credentials = input("Enter credentials (Name Role): ").split()
+
     try:
         while True:
-            if credentials[1].lower() in ["owner", "storage","both"]:
+            if credentials[1].lower() in ["owner", "storage", "both"]:
                 break
-            else:
-                credentials[1] = input("Invalid role. Please enter 'owner', 'storage' or 'Both':")
+            credentials[1] = input("Invalid role. Enter owner/storage/both: ")
 
-        print(credentials)
-
-        name, role, udp, tcp, storage = *credentials[:2], UDP_PORT, TCP_PORT, 1024
-        peer = Peer(name, role, int(udp), int(tcp), storage)
+        name, role = credentials[:2]
+        peer = Peer(name, role, UDP_PORT, TCP_PORT, 1024)
         peer.run()
+
     except KeyboardInterrupt:
         peer.exit()
-    

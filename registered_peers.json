@@ -12,5 +12,12 @@
         "UDP_Port": "59868",
         "TCP_Port": "55406",
         "Storage": "1024"
+    },
+    "PeerB": {
+        "Role": "owner",
+        "IP": "127.0.0.1",
+        "UDP_Port": "61732",
+        "TCP_Port": "50514",
+        "Storage": "1024"
     }
 }

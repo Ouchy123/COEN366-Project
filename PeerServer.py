@@ -3,6 +3,7 @@ import threading
 import json
 import os
 import zlib
+import time
 
 SERVER_IP = "127.0.0.1"
 SERVER_PORT = 5000
@@ -17,6 +18,8 @@ if os.path.exists(DB_FILE):
 else:
     peers = {}
 
+heartbeat_table = {}  # {name: last_timestamp}
+backup_table = {}  # {filename: [peer_list]}
 
 #saving to json database
 def save_db():
@@ -97,6 +100,14 @@ def handleBackupRequest(msg, addr, sock):
 
     _, name, filename, size, received_crc = msg
 
+    with lock:
+        if filename not in backup_table:
+            backup_table[filename] = []
+
+        if name not in backup_table[filename]:
+            backup_table[filename].append(name)
+
+    print("[SERVER] Updated backup table:", backup_table)
 
 #function for handling messages
 def handle_message(data, addr, sock):
@@ -120,17 +131,68 @@ def handle_message(data, addr, sock):
 
         case "BACKUP-REQUEST":
             handleBackupRequest(msg, addr, sock)
+
+    # Handle heartbeat
+        case "HEARTBEAT":
+            handleHeartbeat(msg, addr, sock)
+
+        case "RESTORE_REQ":
+            handleRestoreRequest(msg, addr, sock)
+
         case _:
             print(f"[SERVER] Unknown command from {addr}: {data.decode().strip()}")
             sock.sendto(f"ERROR Unknown_Command".encode(), addr)
+        
+def handleHeartbeat(msg, addr, sock):
+    print("[SERVER] Received HEARTBEAT:", msg)
 
+    if len(msg) != 5:
+        print("[SERVER] HEARTBEAT: Invalid format")
+        return
 
+    _, rq, name, chunk_count, timestamp = msg
+
+    with lock:
+        heartbeat_table[name] = int(timestamp)
+
+import time 
+def heartbeat_watchdog():
+    while True:
+        now = int(time.time())
+
+        with lock:
+            for peer, last in list(heartbeat_table.items()):
+                if now - last > 15:   # more than 15 seconds without heartbeat
+                    print(f"[SERVER] Peer {peer} FAILED (No heartbeat detected).")
+                    # Later: trigger recovery logic from Section 2.5
+                    del heartbeat_table[peer]
+
+        time.sleep(5)
+
+def handleRestoreRequest(msg, addr, sock):
+    if len(msg) != 3:
+        sock.sendto("RESTORE-DENIED 0 Invalid_Format".encode(), addr)
+        return
+
+    _, rq, filename = msg
+
+    # TODO: Replace this with your real table that tracks chunks
+    if filename not in backup_table:
+        reply = f"RESTORE-DENIED {rq} File_Not_Found"
+    else:
+        peer_list = backup_table[filename]
+        reply = f"RESTORE_PLAN {rq} {filename} {peer_list}"
+
+    sock.sendto(reply.encode(), addr)
 
 def server_thread():
     #Main UDP server loop
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind((SERVER_IP, SERVER_PORT))
     print(f"[SERVER] Running on {SERVER_IP}:{SERVER_PORT}")
+
+    # Start heartbeat monitoring
+    threading.Thread(target=heartbeat_watchdog, daemon=True).start()
 
     try:
         while True:
