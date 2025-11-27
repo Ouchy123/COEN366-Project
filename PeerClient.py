@@ -1,6 +1,9 @@
 import socket
 import threading
+import os
 import sys
+import zlib
+import time
 
 SERVER_IP = "127.0.0.1"
 SERVER_PORT = 5000
@@ -14,85 +17,255 @@ class Peer:
         self.udp_port = udp_port
         self.tcp_port = tcp_port
         self.storage = storage
-        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.sock.bind((self.ip, self.udp_port))
-        self.sock.settimeout(1.0)
+
+        # UDP socket
+        self.UDP_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.UDP_sock.bind((self.ip, self.udp_port))
+        self.UDP_sock.settimeout(60.0)
+
+        # TCP socket
+        self.TCP_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.TCP_sock.bind((self.ip, self.tcp_port))
+
         self.running = True
         self.registered = False
+        self.reqNum = (name, 0)
 
-    def listen_responses(self):
-        #Continuously listen for server responses
+    
+    # UDP listener (RESTORE_PLAN handled here)
+    def listen_UDP_responses(self):
         while self.running:
             try:
-                data, _ = self.sock.recvfrom(1024)
-                print(f"\n[CLIENT] Received: {data.decode().strip()}")
+                print("\nListening for UDP responses...")
+                data, _ = self.UDP_sock.recvfrom(1024)
+                message = data.decode().strip()
+                print(f"\n[CLIENT] Received: {message}")
+
+                decoded = message.split()
+
+                # RESTORE PLAN handling
+                if decoded[0] == "RESTORE_PLAN":
+                    _, rq, filename, peer_list_raw = decoded
+                    peer_list = peer_list_raw.strip("[]").split(",")
+
+                    print(f"[CLIENT] Restore plan received. Peers: {peer_list}")
+
+                    self.download_chunks(filename, peer_list)
+
             except socket.timeout:
                 continue
-            except Exception:
+            except Exception as e:
+                print("[CLIENT] UDP Listener Error:", e)
                 break
 
+    def listen_TCP_responses(self):
+        pass
+
+    
     def register(self):
-        #Register this peer with the server
         if self.registered:
             print("[CLIENT] Already registered.")
             return
         msg = f"REGISTER 01 {self.name} {self.role} {self.ip} {self.udp_port} {self.tcp_port} {self.storage}"
-        self.sock.sendto(msg.encode(), (SERVER_IP, SERVER_PORT))
+        self.UDP_sock.sendto(msg.encode(), (SERVER_IP, SERVER_PORT))
         print(f"[CLIENT] Sent: {msg}")
         self.registered = True
 
+    
     def deregister(self):
-        #Remove this peer from the server
         if not self.registered:
             print("[CLIENT] You are not registered.")
             return
         msg = f"DE-REGISTER 02 {self.name}"
-        self.sock.sendto(msg.encode(), (SERVER_IP, SERVER_PORT))
+        self.UDP_sock.sendto(msg.encode(), (SERVER_IP, SERVER_PORT))
         print(f"[CLIENT] Sent: {msg}")
         self.registered = False
 
+   
+    def get_status(self):
+        status = {
+            "Name": self.name,
+            "Role": self.role,
+            "UDP_Port": self.udp_port,
+            "TCP_Port": self.tcp_port,
+            "Storage": self.storage,
+            "Registered": self.registered,
+        }
+        print(f"[CLIENT] Status: {status}")
+        return status
+
+    
+    def exit(self):
+        if self.registered:
+            self.deregister()
+        print("[CLIENT] Exiting...")
+        self.running = False
+        self.UDP_sock.close()
+        self.TCP_sock.close()
+
+   
+    # BACKUP
+    
+    def backup_request(self):
+        while True:
+            path = input("Enter the file path to back up: ").strip()
+
+            if os.path.isfile(path):
+                print("File found:", path, "\nStarting backup process...")
+                size = os.path.getsize(path)
+
+                msg = f"BACKUP-REQUEST {self.name} {os.path.basename(path)} {size}"
+                msg = msg + f" {self.crc32_backup(msg.encode())}"
+
+                print("[CLIENT] Sending backup request:", msg)
+                self.UDP_sock.sendto(msg.encode(), (SERVER_IP, SERVER_PORT))
+                break
+
+            elif path.lower() == "exit":
+                print("Exiting backup request.")
+                break
+
+            else:
+                print("File not found")
+
+   
+    # RESTORE REQUEST
+    
+    def restore_request(self):
+        filename = input("Enter filename to restore: ").strip()
+        rq = self.reqNum[1]
+        msg = f"RESTORE_REQ {rq} {filename}"
+        self.UDP_sock.sendto(msg.encode(), (SERVER_IP, SERVER_PORT))
+        print(f"[CLIENT] Sent: {msg}")
+
+    
+    def crc32_backup(self, msg: bytes):
+        return zlib.crc32(msg) & 0xFFFFFFFF
+
+   
+    # HEARTBEAT
+    
+    def send_heartbeat(self):
+        while self.running:
+            if self.registered:
+                ts = int(time.time())
+                msg = f"HEARTBEAT {self.reqNum[1]} {self.name} 0 {ts}"
+                try:
+                    self.UDP_sock.sendto(msg.encode(), (SERVER_IP, SERVER_PORT))
+                    print(f"[CLIENT] Sent heartbeat: {msg}")
+                except:
+                    pass
+            time.sleep(5)
+
+    
+    # TCP chunk downloader (temporary stub)
+    
+    def download_chunks(self, filename, peer_list):
+        print(f"[CLIENT] Starting file restore for: {filename}")
+        print(f"[CLIENT] (TEMP) Not actually downloading chunks yet.")
+        print(f"[CLIENT] Would connect to peers: {peer_list}")
+        print("[CLIENT] Restore complete (stub).")
+
+    
+    # TCP server for storage peers
+    
+    def start_storage_TCP_server(self):
+        self.TCP_sock.listen()
+
+        while True:
+            conn, addr = self.TCP_sock.accept()
+            threading.Thread(
+                target=self.handle_TCP_chunk_request,
+                args=(conn,),
+                daemon=True,
+            ).start()
+
+
+    def handle_TCP_chunk_request(self, conn):
+        header = conn.recv(1024).decode().strip().split()
+        _, rq, filename, chunk_id = header
+
+        chunk_path = f"chunks/{filename}_chunk{chunk_id}"
+
+        if not os.path.exists(chunk_path):
+            print(f"[CLIENT] Missing chunk: {chunk_path}")
+            conn.close()
+            return
+
+        with open(chunk_path, "rb") as f:
+            data = f.read()
+
+        checksum = zlib.crc32(data) & 0xFFFFFFFF
+        response_header = f"CHUNK_DATA {rq} {filename} {chunk_id} {checksum}\n"
+
+        conn.sendall(response_header.encode() + data)
+        conn.close()
+
+   
     def run(self):
-        #Main command loop for the peer
-        listener = threading.Thread(target=self.listen_responses, daemon=True)
-        listener.start()
+        # Start threads
+        threading.Thread(target=self.listen_UDP_responses, daemon=True).start()
+        threading.Thread(target=self.start_storage_TCP_server, daemon=True).start()
+        threading.Thread(target=self.send_heartbeat, daemon=True).start()
 
         print(f"\n[CLIENT] Peer '{self.name}' is active.")
         print("[CLIENT] Available commands:")
-        print("  register   → register this peer with the server")
-        print("  deregister → remove this peer from the server")
-        print("  status     → show peer info")
-        print("  exit       → close connection and quit\n")
+        print("  register")
+        print("  deregister")
+        print("  status")
+        print("  backup")
+        print("  restore")
+        print("  exit\n")
 
-        while True:
+        while self.running:
             cmd = input("Command: ").strip().lower()
 
-            if cmd == "register":
-                self.register()
-            elif cmd == "deregister":
-                self.deregister()
-            elif cmd == "status":
-                print(
-                    f"[CLIENT] Name: {self.name}, Role: {self.role}, "
-                    f"UDP: {self.udp_port}, TCP: {self.tcp_port}, "
-                    f"Storage: {self.storage}, Registered: {self.registered}"
-                )
-            elif cmd == "exit":
-                if self.registered:
+            match cmd:
+                case "register":
+                    self.register()
+                case "deregister":
                     self.deregister()
-                print("[CLIENT] Exiting...")
-                self.running = False
-                break
-            else:
-                print("[CLIENT] Unknown command. Try 'register', 'deregister', 'status', or 'exit'.")
+                case "status":
+                    self.get_status()
+                case "backup":
+                    self.backup_request()
+                case "restore":
+                    self.restore_request()
+                case "exit":
+                    self.exit()
+                case _:
+                    print("[CLIENT] Unknown command.")
 
-        self.sock.close()
+
+
+def get_free_TCP_port():
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("", 0))
+        return s.getsockname()[1]
+
+
+def get_free_UDP_port():
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+        s.bind(("", 0))
+        return s.getsockname()[1]
+
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 6:
-        print("Usage: python PeerClient.py <Name> <Role> <UDP_Port> <TCP_Port> <Storage>")
-        sys.exit(1)
+    UDP_PORT = get_free_UDP_port()
+    TCP_PORT = get_free_TCP_port()
 
-    name, role, udp, tcp, storage = sys.argv[1:]
-    peer = Peer(name, role, int(udp), int(tcp), storage)
-    peer.run()
+    credentials = input("Enter credentials (Name Role): ").split()
+
+    try:
+        while True:
+            if credentials[1].lower() in ["owner", "storage", "both"]:
+                break
+            credentials[1] = input("Invalid role. Enter owner/storage/both: ")
+
+        name, role = credentials[:2]
+        peer = Peer(name, role, UDP_PORT, TCP_PORT, 1024)
+        peer.run()
+
+    except KeyboardInterrupt:
+        peer.exit()
