@@ -1,1 +1,9 @@
-{}
+{
+    "Alice": {
+        "Role": "BOTH",
+        "IP": "127.0.0.1",
+        "UDP_Port": "5001",
+        "TCP_Port": "6001",
+        "Storage": "1025MB"
+    }
+}
