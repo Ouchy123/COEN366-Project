@@ -181,7 +181,7 @@ class Peer:
         while True:
             conn, addr = self.TCP_sock.accept()
             print("[CLIENT - TCP] Connection from:", addr)
-            threading.Thread(target=self.handle_TCP_chunk_request,args=(conn,),daemon=True,).start()
+            threading.Thread(target=self.handle_TCP_reception,args=(conn,),daemon=True,).start()
 
 
     def requestTCPBackup(self,message):
@@ -236,7 +236,7 @@ class Peer:
             data += packet
         return data
 
-    def handle_TCP_chunk_request(self, conn):
+    def handle_TCP_reception(self, conn):
         try:
 
             headerLine = self.recv_until_newline(conn) #conn.recv(1024).decode().strip().split()
@@ -245,37 +245,42 @@ class Peer:
             if(header[0]=="CHUNK_OK"):
                 print("[CLIENT - TCP] Chunk stored successfully confirmation received:", headerLine)
                 return
-            _, rq, filename, chunk_id, owner, addr, size, checSum= header
-            addr=addr.split(",")
-            addr=(addr[0],int(addr[1]))
-            chunk_id = int(chunk_id)
-            checksum = int(checSum)
-            size = int(size)
+            if(header[0] =="SEND_CHUNK"):
+                _, rq, filename, chunk_id, owner, addr, size, checSum= header
+                addr=addr.split(",")
+                addr=(addr[0],int(addr[1]))
+                chunk_id = int(chunk_id)
+                checksum = int(checSum)
+                size = int(size)
 
-            print("[CLIENT - TCP] Chunk request received for:", filename, " Chunk ID:", chunk_id)
+                print("[CLIENT - TCP] Chunk request received for:", filename, " Chunk ID:", chunk_id)
 
-            chunk_data = self.recv_exact(conn, size)
+                chunk_data = self.recv_exact(conn, size)
 
-            # 3. Validate checksum
-            calc_crc = zlib.crc32(chunk_data) & 0xFFFFFFFF
+                # 3. Validate checksum
+                calc_crc = zlib.crc32(chunk_data) & 0xFFFFFFFF
 
-            if calc_crc != checksum:
-                print("[CLIENT - TCP] ERROR: Checksum mismatch, chunk corrupted!")
-                return
-            print("[CLIENT - TCP] Checksum validated. Processing received chunk...")
+                if calc_crc != checksum:
+                    print("[CLIENT - TCP] ERROR: Checksum mismatch, chunk corrupted!")
+                    return
+                print("[CLIENT - TCP] Checksum validated. Processing received chunk...")
 
-            os.makedirs("chunks", exist_ok=True)
-            chunk_path = f"chunks/{owner}-{filename}-{chunk_id}"
+                os.makedirs("chunks", exist_ok=True)
+                chunk_path = f"chunks/{owner}-{filename}-{chunk_id}"
 
-            # 5. Save chunk to disk
-            with open(chunk_path, "wb") as f:
-                f.write(chunk_data)
+                # 5. Save chunk to disk
+                with open(chunk_path, "wb") as f:
+                    f.write(chunk_data)
 
-            print(f"[CLIENT - TCP] Stored chunk at {chunk_path}")
-            msg = f"CHUNK_OK RQ {filename} {self.name} {chunk_id}"
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                s.connect(addr)
-                s.sendall(msg.encode())
+                print(f"[CLIENT - TCP] Stored chunk at {chunk_path}")
+                msg = f"CHUNK_OK RQ {filename} {self.name} {chunk_id}"
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                    s.connect(addr)
+                    s.sendall(msg.encode())
+
+            if(header[0]=="GET_CHUNK"):
+                pass
+                
 
         except Exception as e:
             print("[TCP] ERROR receiving chunk:", e)

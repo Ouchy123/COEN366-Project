@@ -130,14 +130,14 @@ def handleBackupRequest(msg, addr, sock):
     print(f"[SERVER] Backup request from {name} for file {filename} of size {size} bytes")
     with lock:
         if filename not in backup_table:
-            backup_table[filename] = []
+            backup_table[filename] = {}
         else:
             print("[SERVER] File already exists in backup table, therefore we cannot do a double backup.")
             msg = f"BACKUP-DENIED RQ {filename} File_Already_Backed_Up."
             sock.sendto(msg.encode(), addr)
             return
         if name not in backup_table[filename]:
-            backup_table[filename].append(name)
+            backup_table[filename][name]=""
             
     print("[SERVER] Updated backup table:", backup_table)
     
@@ -176,6 +176,7 @@ def handleBackupRequest(msg, addr, sock):
         for peer in backupPeer:
             sock.sendto(f"STORAGE_TASK RQ {filename} Owner:{name} {chunk_size}".encode(), (peers[peer]["IP"], int(peers[peer]["UDP_Port"])))
     replyRequester = f"BACKUP-PLAN RQ {filename} {strPeers} {chunk_size}"
+    backup_table[filename][name]=strPeers
     sock.sendto(replyRequester.encode(), addr)
     print(f"[SERVER] Sent backup plan to requester {name}: {replyRequester}")
 
@@ -251,8 +252,12 @@ def handleRestoreRequest(msg, addr, sock):
     if filename not in backup_table:
         reply = f"RESTORE-DENIED {rq} File_Not_Found"
     else:
-        peer_list = backup_table[filename]
-        reply = f"RESTORE_PLAN {rq} {filename} {peer_list}"
+        real_peer_list =""
+        for owner,peerlist in backup_table[filename].items():
+            print("[SERVER] - Printing the backup table inside RESTORE REQ: ",owner," ",peerlist)
+            real_peer_list= peerlist
+        
+        reply = f"RESTORE_PLAN {rq} {filename} {real_peer_list}"
 
     sock.sendto(reply.encode(), addr)
 

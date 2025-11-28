@@ -2,22 +2,22 @@
     "Moha": {
         "Role": "both",
         "IP": "127.0.0.1",
-        "UDP_Port": "53157",
-        "TCP_Port": "62099",
+        "UDP_Port": "54348",
+        "TCP_Port": "63867",
         "Storage": "1024"
     },
     "Momo1": {
         "Role": "both",
         "IP": "127.0.0.1",
-        "UDP_Port": "62735",
-        "TCP_Port": "62120",
+        "UDP_Port": "63890",
+        "TCP_Port": "63912",
         "Storage": "1024"
     },
     "Momo2": {
         "Role": "both",
         "IP": "127.0.0.1",
-        "UDP_Port": "53319",
-        "TCP_Port": "62142",
+        "UDP_Port": "57639",
+        "TCP_Port": "63931",
         "Storage": "1024"
     }
 }
