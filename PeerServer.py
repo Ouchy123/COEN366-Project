@@ -32,7 +32,7 @@ def save_db():
 
 def handleRegistration(msg,addr,sock):
     
-    print("At handleRegistration")
+    print("\n[SERVER] : At handleRegistration\n")
     if len(msg) != 8:
         reply = f"REGISTER-DENIED {msg[1] if len(msg) > 1 else 0} Invalid_Format"
         sock.sendto(reply.encode(), addr)
@@ -66,7 +66,7 @@ def handleRegistration(msg,addr,sock):
     sock.sendto(reply.encode(), addr)
 
 def handleDeregistration(msg, addr, sock):
-    print("At handleDeregistration")
+    print("\n[SERVER] : At handleDeregistration\n")
     if len(msg) != 3:
         reply = f"DE-REGISTER-DENIED {msg[1] if len(msg) > 1 else 0} Invalid_Format"
         sock.sendto(reply.encode(), addr)
@@ -79,15 +79,15 @@ def handleDeregistration(msg, addr, sock):
             del peers[name]
             save_db()
             reply = f"DE-REGISTERED {rq}"
-            print(f"[SERVER] {name} deregistered.")
+            print(f"[SERVER] : {name} deregistered.")
         else:
             reply = f"DE-REGISTER-DENIED {rq} Unknown_Peer"
-            print(f"[SERVER] Unknown peer {name} tried to deregister.")
+            print(f"[SERVER] : Unknown peer {name} tried to deregister.")
 
     sock.sendto(reply.encode(), addr)
 
 def handleBackupRequest(msg, addr, sock):
-    print("[SERVER] Handling Backup-Request: ", msg)
+    print("[SERVER] : Handling Backup-Request: ", msg)
     if len(msg) != 5:
         reply = f"BACKUP-DENIED {msg[1] if len(msg) > 1 else 0} Invalid_Format"
         sock.sendto(reply.encode(), addr)
@@ -99,15 +99,30 @@ def handleBackupRequest(msg, addr, sock):
         print("[SERVER] CRC32 Check Passed")
 
     _, name, filename, size, received_crc = msg
-
+    print(f"[SERVER] Backup request from {name} for file {filename} of size {size} bytes")
     with lock:
         if filename not in backup_table:
             backup_table[filename] = []
-
         if name not in backup_table[filename]:
             backup_table[filename].append(name)
-
+            
     print("[SERVER] Updated backup table:", backup_table)
+    
+    #Check for peers with storage role and sufficient space
+    backupPeer={}
+    strPeers=""
+    for peer, peer_info in peers.items():
+        print("[Server] - Checking peer: ",peer, ". Role is: ",peer_info["Role"]," and storage is: ", peer_info["Storage"])
+        if(peer_info["Role"] in ["storage", "both"] and peer != name and int(peer_info["Storage"]) >= int(size)):
+            print("[Server] - Peer ",peer," is eligible for backup")
+            backupPeer[peer]=f"{peer},{peer_info["IP"]},{peer_info["TCP_Port"]}|"
+            strPeers+=str(backupPeer[peer])
+
+    print("[Server] - Printing the backupPeer: ",backupPeer)
+    #for peer in backupPeer:
+    #    sock.sendto(f"STORAGE_TASK RQ {filename} {name} {size}".encode(), (peers[peer]["IP"], int(peers[peer]["UDP_Port"])))
+    #chunk_count =1
+    #chunk_size =size//len(backupPeer)
 
 #function for handling messages
 def handle_message(data, addr, sock):
@@ -203,6 +218,7 @@ def server_thread():
         sock.close()
         save_db()
         print("[SERVER] Database saved. Goodbye!")
+    print("[SERVER] Exited main loop.")
 
 
 if __name__ == "__main__":

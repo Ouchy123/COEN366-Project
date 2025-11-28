@@ -62,6 +62,7 @@ class Peer:
         pass
 
     
+    #Client Handling of requests
     def register(self):
         if self.registered:
             print("[CLIENT] Already registered.")
@@ -103,8 +104,6 @@ class Peer:
         self.UDP_sock.close()
         self.TCP_sock.close()
 
-   
-    # BACKUP
     
     def backup_request(self):
         while True:
@@ -127,9 +126,6 @@ class Peer:
 
             else:
                 print("File not found")
-
-   
-    # RESTORE REQUEST
     
     def restore_request(self):
         filename = input("Enter filename to restore: ").strip()
@@ -242,7 +238,6 @@ def get_free_TCP_port():
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(("", 0))
         return s.getsockname()[1]
-
 
 def get_free_UDP_port():
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:

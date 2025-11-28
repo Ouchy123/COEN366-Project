@@ -19,5 +19,12 @@
         "UDP_Port": "61732",
         "TCP_Port": "50514",
         "Storage": "1024"
+    },
+    "Mohaa": {
+        "Role": "both",
+        "IP": "127.0.0.1",
+        "UDP_Port": "50700",
+        "TCP_Port": "65098",
+        "Storage": "1024"
     }
 }
