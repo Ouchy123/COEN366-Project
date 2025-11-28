@@ -131,29 +131,51 @@ def handleBackupRequest(msg, addr, sock):
     with lock:
         if filename not in backup_table:
             backup_table[filename] = []
+        else:
+            print("[SERVER] File already exists in backup table, therefore we cannot do a double backup.")
+            msg = f"BACKUP-DENIED RQ {filename} File_Already_Backed_Up."
+            sock.sendto(msg.encode(), addr)
+            return
         if name not in backup_table[filename]:
             backup_table[filename].append(name)
             
     print("[SERVER] Updated backup table:", backup_table)
     
     #Check for peers with storage role and sufficient space
+    potentialPeer=[]
     backupPeer={}
     strPeers=""
     global peers
     with lock:
         for peer, peer_info in peers.items():
             print("[Server] - Checking peer: ",peer, ". Role is: ",peer_info["Role"]," and storage is: ", peer_info["Storage"])
-            if(peer_info["Role"] in ["storage", "both"] and peer != name and int(peer_info["Storage"]) >= int(size)):
-                print("[Server] - Peer ",peer," is eligible for backup")
-                backupPeer[peer]=f"{peer},{peer_info["IP"]},{peer_info["TCP_Port"]}|"
-                strPeers+=str(backupPeer[peer])
+            if(peer_info["Role"] in ["storage", "both"] and peer != name):
+                potentialPeer.append(peer)
+        
+        count = len(potentialPeer)
+        while count !=0:
+            for peer in potentialPeer:
+                if(int(peers[peer]["Storage"])>= int(size)//count):
+                    print("[SERVER] - Peer ",peer," has been added temporarily")
+                    pass
+                    
+                else:
+                    potentialPeer.remove(peer)
+                    count=len(potentialPeer)
+                    break
+            count=0
 
+        for peer in potentialPeer:
+            print("[Server] - Peer ",peer," is eligible for backup")
+            backupPeer[peer]=f"{peer},{peers[peer]["IP"]},{peers[peer]["TCP_Port"]}|"
+            strPeers+=str(backupPeer[peer])
+            
         print("[Server] - Printing the backupPeer: ",backupPeer)
         chunk_size =int(size)//len(backupPeer)
         decimal_chunk_size=int(size)/len(backupPeer)
         for peer in backupPeer:
             sock.sendto(f"STORAGE_TASK RQ {filename} Owner:{name} {chunk_size}".encode(), (peers[peer]["IP"], int(peers[peer]["UDP_Port"])))
-    replyRequester = f"BACKUP-PLAN RQ {filename} {strPeers} {size}"
+    replyRequester = f"BACKUP-PLAN RQ {filename} {strPeers} {chunk_size}"
     sock.sendto(replyRequester.encode(), addr)
     print(f"[SERVER] Sent backup plan to requester {name}: {replyRequester}")
 

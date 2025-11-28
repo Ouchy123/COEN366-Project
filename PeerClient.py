@@ -53,6 +53,14 @@ class Peer:
                     self.download_chunks(filename, peer_list)
                 if(decoded[0] == "PING"):
                     self.UDP_sock.sendto("PONG".encode(), adr)
+                if(decoded[0]=="STORAGE_TASK"):
+                    print("[CLIENT] Received STORAGE_TASK:", message)
+                if(decoded[0]=="BACKUP-PLAN"):
+                    print("[CLIENT] Received BACKUP-PLAN:", message)
+                    self.requestTCPBackup(message)
+                if(decoded[0]=="BACKUP-DENIED"):
+                    print("[CLIENT] Received BACKUP-DENIED. Reason is: ", decoded[-1])
+                    
 
             except socket.timeout:
                 continue
@@ -172,32 +180,108 @@ class Peer:
 
         while True:
             conn, addr = self.TCP_sock.accept()
-            threading.Thread(
-                target=self.handle_TCP_chunk_request,
-                args=(conn,),
-                daemon=True,
-            ).start()
+            print("[CLIENT - TCP] Connection from:", addr)
+            threading.Thread(target=self.handle_TCP_chunk_request,args=(conn,),daemon=True,).start()
 
+
+    def requestTCPBackup(self,message):
+        splitMsg=message.split()
+        _,rq,filename,backupPeers,size=splitMsg
+        backupPeers=backupPeers[:-1].split("|")
+        print("[CLIENT] - Preparing the chunks from the file: ",filename, " with peers: ",backupPeers,"...")
+        chunks=[]
+        fileSize = os.path.getsize(filename)
+        count=len(backupPeers)
+        nb=0
+        with open(filename,"rb") as f:
+            while True:
+                if count>1:
+                    data=f.read(int(size))
+                    nb+=nb
+                    count-=count
+                elif count==1:
+                    data=f.read(fileSize - (nb*int(size)))
+                else:
+                    data=f.read()
+                    if not data:
+                        break
+                chunks.append(data)
+
+        print("[CLIENT] - The chunks have been successgully divided and ready to send. Total Chunks: ",len(chunks))
+        print("[CLIENT] - Sending the chunks to the storage peers...")
+        for i,peer in enumerate(backupPeers):
+            peerInfo=peer.split(",")
+            peerName,peerIP,peerTCPPort=peerInfo
+            msg=f"SEND_CHUNK RQ {filename} {i} {self.name} {self.ip},{self.tcp_port} {chunks[i].__len__()}"
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.connect((peerIP,int(peerTCPPort)))
+                header=f"{msg} {zlib.crc32(chunks[i]) & 0xFFFFFFFF}\n"
+                s.sendall(header.encode()+chunks[i])
+
+    def recv_until_newline(self, conn):
+        data = b""
+        while not data.endswith(b"\n"):
+            packet = conn.recv(1)
+            if not packet:
+                break
+            data += packet
+        return data.decode().strip()
+
+    def recv_exact(self, conn, size):
+        data = b""
+        while len(data) < size:
+            packet = conn.recv(size - len(data))
+            if not packet:
+                break
+            data += packet
+        return data
 
     def handle_TCP_chunk_request(self, conn):
-        header = conn.recv(1024).decode().strip().split()
-        _, rq, filename, chunk_id = header
+        try:
 
-        chunk_path = f"chunks/{filename}_chunk{chunk_id}"
+            headerLine = self.recv_until_newline(conn) #conn.recv(1024).decode().strip().split()
+            header = headerLine.split()
+            print("We are receiving a message, here is the hader: ",header)
+            if(header[0]=="CHUNK_OK"):
+                print("[CLIENT - TCP] Chunk stored successfully confirmation received:", headerLine)
+                return
+            _, rq, filename, chunk_id, owner, addr, size, checSum= header
+            addr=addr.split(",")
+            addr=(addr[0],int(addr[1]))
+            chunk_id = int(chunk_id)
+            checksum = int(checSum)
+            size = int(size)
 
-        if not os.path.exists(chunk_path):
-            print(f"[CLIENT] Missing chunk: {chunk_path}")
+            print("[CLIENT - TCP] Chunk request received for:", filename, " Chunk ID:", chunk_id)
+
+            chunk_data = self.recv_exact(conn, size)
+
+            # 3. Validate checksum
+            calc_crc = zlib.crc32(chunk_data) & 0xFFFFFFFF
+
+            if calc_crc != checksum:
+                print("[CLIENT - TCP] ERROR: Checksum mismatch, chunk corrupted!")
+                return
+            print("[CLIENT - TCP] Checksum validated. Processing received chunk...")
+
+            os.makedirs("chunks", exist_ok=True)
+            chunk_path = f"chunks/{owner}-{filename}-{chunk_id}"
+
+            # 5. Save chunk to disk
+            with open(chunk_path, "wb") as f:
+                f.write(chunk_data)
+
+            print(f"[CLIENT - TCP] Stored chunk at {chunk_path}")
+            msg = f"CHUNK_OK RQ {filename} {self.name} {chunk_id}"
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.connect(addr)
+                s.sendall(msg.encode())
+
+        except Exception as e:
+            print("[TCP] ERROR receiving chunk:", e)
+
+        finally:
             conn.close()
-            return
-
-        with open(chunk_path, "rb") as f:
-            data = f.read()
-
-        checksum = zlib.crc32(data) & 0xFFFFFFFF
-        response_header = f"CHUNK_DATA {rq} {filename} {chunk_id} {checksum}\n"
-
-        conn.sendall(response_header.encode() + data)
-        conn.close()
 
    
     def run(self):
