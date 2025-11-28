@@ -184,10 +184,11 @@ class Peer:
     def requestTCPRestore(self,message):
         _, rq, filename, peer_list_raw = message
         peer_list = peer_list_raw[:-1].split("|")
+        size = os.path.getsize(filename)
         for i,peer in enumerate(peer_list):
             peerInfo=peer.split(",")
             peerName,peerIP,peerTCPPort=peerInfo
-            msg=f"GET_CHUNK RQ {filename} {i} {self.name} {self.ip},{self.tcp_port}"
+            msg=f"GET_CHUNK RQ {filename} {i} {self.name} {self.ip},{self.tcp_port} {size}\n"
             print("[CLIENT] - Requesting chunk from peer: ",peerName," at IP:",peerIP," and TCP Port:",peerTCPPort)
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                 s.connect((peerIP,int(peerTCPPort)))
@@ -288,7 +289,7 @@ class Peer:
                     s.sendall(msg.encode())
 
             if(header[0]=="GET_CHUNK"):
-                _, rq, filename, chunk_id, owner, addr= header
+                _, rq, filename, chunk_id, owner, addr, size= header
                 addr=addr.split(",")
                 addr=(addr[0],int(addr[1]))
                 chunk_id=int(chunk_id)
@@ -300,13 +301,21 @@ class Peer:
                 with open(chunk_path,"rb") as f:
                     chunk_data=f.read()
                 checksum=zlib.crc32(chunk_data) & 0xFFFFFFFF
-                msg=f"CHUNK_DATA RQ {filename} {chunk_id}n{checksum}\n"
+                msg=f"CHUNK_DATA RQ {filename} {chunk_id} {checksum} {size}\n"
                 print(f"[CLIENT - TCP] Restore: Sent chunk {chunk_id} of file {filename}")
                 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                     s.connect((addr[0],int(addr[1])))
                     s.sendall(msg.encode()+chunk_data)
+            
             if(header[0]=="CHUNK_DATA"):
+                _, rq, filename, chunk_id, chekSum, size= header
                 print("[CLIENT - TCP] Receiving chunk data...")
+                chunk_data = self.recv_exact(conn, int(size))
+                with open(filename, "ab") as f:
+                    f.write(chunk_data)
+
+                print(f"[CLIENT - TCP] Restored - Stored chunk at {filename}")
+                
 
             
                 
