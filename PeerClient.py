@@ -32,50 +32,51 @@ class Peer:
         self.reqNum = (name, 0)
 
     
-   def listen_UDP_responses(self):
-    while self.running:
-        try:
-            print("\nListening for UDP responses...")
-            data, _ = self.UDP_sock.recvfrom(1024)
-            message = data.decode().strip()
-            print(f"\n[CLIENT] Received: {message}")
+    def listen_UDP_responses(self):
+        while self.running:
+            try:
+                print("\nListening for UDP responses...")
+                data, _ = self.UDP_sock.recvfrom(1024)
+                message = data.decode().strip()
+                print(f"\n[CLIENT] Received: {message}")
 
-            decoded = message.split()
-            if not decoded:
-                continue
-
-            cmd = decoded[0]
-
-            if cmd == "RESTORE_PLAN":
-                _, rq, filename, peer_list_raw = decoded
-                peer_list = peer_list_raw.strip("[]").split(",")
-
-                print(f"[CLIENT] Restore plan received. Peers: {peer_list}")
-
-                self.download_chunks(filename, peer_list)
-
-            elif cmd == "REPLICATE_REQ":
-                if len(decoded) != 7:
-                    print("[CLIENT] Invalid REPLICATE_REQ format.")
+                decoded = message.split()
+                if not decoded:
                     continue
 
-                _, rq, filename, owner, source_peer, source_ip, source_tcp = decoded
+                cmd = decoded[0]
 
-                print(f"[CLIENT] REPLICATE_REQ received for {filename} from {source_peer}")
+                if cmd == "RESTORE_PLAN":
+                    _, rq, filename, peer_list_raw = decoded
+                    peer_list = peer_list_raw.strip("[]").split(",")
 
-                self.handle_replication(
-                    filename,
-                    owner,
-                    source_peer,
-                    source_ip,
-                    int(source_tcp)
-                )
+                    print(f"[CLIENT] Restore plan received. Peers: {peer_list}")
 
-        except socket.timeout:
-            continue
-        except Exception as e:
-            print("[CLIENT] UDP Listener Error:", e)
-            break
+                    self.download_chunks(filename, peer_list)
+
+                elif cmd == "REPLICATE_REQ":
+                    if len(decoded) != 7:
+                        print("[CLIENT] Invalid REPLICATE_REQ format.")
+                        continue
+
+                    _, rq, filename, owner, source_peer, source_ip, source_tcp = decoded
+
+                    print(f"[CLIENT] REPLICATE_REQ received for {filename} from {source_peer}")
+
+                    self.handle_replication(
+                        filename,
+                        owner,
+                        source_peer,
+                        source_ip,
+                        int(source_tcp)
+                    )
+
+            except socket.timeout:
+                continue
+            except Exception as e:
+                print("[CLIENT] UDP Listener Error:", e)
+                break
+
 
     
     def register(self):
@@ -183,56 +184,49 @@ class Peer:
         print("[CLIENT] Restore complete (stub).")
 
     def handle_replication(self, filename, owner, source_peer, source_ip, source_tcp):
-    print(f"[CLIENT] Starting replication for {filename} "
-          f"from {source_peer}@{source_ip}:{source_tcp}")
+        print(f"[CLIENT] Starting replication for {filename}" f"from {source_peer}@{source_ip}:{source_tcp}")
 
-    try:
-        # Connect to the source via TCP
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.connect((source_ip, source_tcp))
-
-        # Request chunk (in your system: entire file)
-        rq = self.reqNum[1]  # you are not incrementing reqNum, but matching your code
-        msg = f"GET_CHUNK {rq} {filename}"
-        s.send(msg.encode())
-
-        # Receive header
-        header = s.recv(1024).decode().strip().split()
-        if len(header) < 5 or header[0] != "CHUNK_DATA":
-            print("[CLIENT] Invalid chunk header during replication:", header)
-            return
-
-        _, _, _, chunk_id, checksum = header
-
-        # Receive chunk
-        chunk = s.recv(999999)
-
-        # Verify checksum
-        actual = zlib.crc32(chunk) & 0xFFFFFFFF
-        if actual != int(checksum):
-            print("[CLIENT] Replication checksum mismatch!")
-            return
-
-        # Save replica locally
-        save_path = f"chunks/{filename}_replica"
-        with open(save_path, "wb") as f:
-            f.write(chunk)
-
-        print(f"[CLIENT] Replication complete. Saved at {save_path}")
-
-        # Notify server
-        ack = f"REPLICATE_DONE {rq} {filename} {owner} {self.name}"
-        self.UDP_sock.sendto(ack.encode(), (SERVER_IP, SERVER_PORT))
-        print(f"[CLIENT] Sent: {ack}")
-
-    except Exception as e:
-        print("[CLIENT] Replication Error:", e)
-
-    finally:
         try:
-            s.close()
-        except:
-            pass
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.connect((source_ip, source_tcp))
+
+            rq = self.reqNum[1]
+            msg = f"GET_CHUNK {rq} {filename}"
+            s.send(msg.encode())
+
+            header = s.recv(1024).decode().strip().split()
+            if len(header) < 5 or header[0] != "CHUNK_DATA":
+                print("[CLIENT] Invalid chunk header during replication:", header)
+                return
+
+            _, _, _, chunk_id, checksum = header
+
+            chunk = s.recv(999999)
+
+            actual = zlib.crc32(chunk) & 0xFFFFFFFF
+            if actual != int(checksum):
+                print("[CLIENT] Replication checksum mismatch!")
+                return
+
+            save_path = f"chunks/{filename}_replica"
+            with open(save_path, "wb") as f:
+                f.write(chunk)
+
+            print(f"[CLIENT] Replication complete. Saved at {save_path}")
+
+            ack = f"REPLICATE_DONE {rq} {filename} {owner} {self.name}"
+            self.UDP_sock.sendto(ack.encode(), (SERVER_IP, SERVER_PORT))
+            print(f"[CLIENT] Sent: {ack}")
+
+        except Exception as e:
+            print("[CLIENT] Replication Error:", e)
+
+        finally:
+            try:
+                s.close()
+            except:
+                pass
+
     
     # TCP server for storage peers
     
