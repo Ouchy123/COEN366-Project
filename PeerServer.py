@@ -149,10 +149,14 @@ def handleBackupRequest(msg, addr, sock):
                 strPeers+=str(backupPeer[peer])
 
         print("[Server] - Printing the backupPeer: ",backupPeer)
+        chunk_size =int(size)//len(backupPeer)
+        decimal_chunk_size=int(size)/len(backupPeer)
         for peer in backupPeer:
-            sock.sendto(f"STORAGE_TASK RQ {filename} Owner:{name} {size}".encode(), (peers[peer]["IP"], int(peers[peer]["UDP_Port"])))
-    #chunk_count =1
-    #chunk_size =size//len(backupPeer)
+            sock.sendto(f"STORAGE_TASK RQ {filename} Owner:{name} {chunk_size}".encode(), (peers[peer]["IP"], int(peers[peer]["UDP_Port"])))
+    replyRequester = f"BACKUP-PLAN RQ {filename} {strPeers} {size}"
+    sock.sendto(replyRequester.encode(), addr)
+    print(f"[SERVER] Sent backup plan to requester {name}: {replyRequester}")
+
 
 #function for handling messages
 def handle_message(data, addr, sock):

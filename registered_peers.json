@@ -5,5 +5,19 @@
         "UDP_Port": "52861",
         "TCP_Port": "50592",
         "Storage": "1024"
+    },
+    "Momo1": {
+        "Role": "both",
+        "IP": "127.0.0.1",
+        "UDP_Port": "49596",
+        "TCP_Port": "50830",
+        "Storage": "1024"
+    },
+    "Momo2": {
+        "Role": "both",
+        "IP": "127.0.0.1",
+        "UDP_Port": "51041",
+        "TCP_Port": "50855",
+        "Storage": "1024"
     }
 }
