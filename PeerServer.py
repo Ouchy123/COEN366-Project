@@ -88,24 +88,33 @@ def handleDeregistration(msg, addr, sock):
 
 def handleBackupRequest(msg, addr, sock):
     print("[SERVER] Handling Backup-Request: ", msg)
+
     if len(msg) != 5:
         reply = f"BACKUP-DENIED {msg[1] if len(msg) > 1 else 0} Invalid_Format"
         sock.sendto(reply.encode(), addr)
         return
-    
+
     msgWithoutCRC = ' '.join(msg[:-1])
     calculated_crc = zlib.crc32(msgWithoutCRC.encode()) & 0xFFFFFFFF
     if str(calculated_crc) == msg[-1]:
         print("[SERVER] CRC32 Check Passed")
 
-    _, name, filename, size, received_crc = msg
+    _, owner, filename, size, received_crc = msg
 
+    # Select all storage peers (owner or storage/both)
     with lock:
         if filename not in backup_table:
             backup_table[filename] = []
 
-        if name not in backup_table[filename]:
-            backup_table[filename].append(name)
+        for peer_name, info in peers.items():
+            # simplistic assignment — real allocation can be smarter
+            entry = {
+                "peer": peer_name,
+                "owner": owner,
+                "ip": info["IP"],
+                "tcp": info["TCP_Port"]
+            }
+            backup_table[filename].append(entry)
 
     print("[SERVER] Updated backup table:", backup_table)
 
@@ -138,11 +147,13 @@ def handle_message(data, addr, sock):
 
         case "RESTORE_REQ":
             handleRestoreRequest(msg, addr, sock)
-
+        case "REPLICATE_DONE":
+            handleReplicateDone(msg, addr, sock)
         case _:
             print(f"[SERVER] Unknown command from {addr}: {data.decode().strip()}")
             sock.sendto(f"ERROR Unknown_Command".encode(), addr)
-        
+
+
 def handleHeartbeat(msg, addr, sock):
     print("[SERVER] Received HEARTBEAT:", msg)
 
@@ -156,18 +167,85 @@ def handleHeartbeat(msg, addr, sock):
         heartbeat_table[name] = int(timestamp)
 
 import time 
-def heartbeat_watchdog():
+def heartbeat_watchdog(sock):
     while True:
         now = int(time.time())
 
         with lock:
             for peer, last in list(heartbeat_table.items()):
-                if now - last > 15:   # more than 15 seconds without heartbeat
+                if now - last > 15:
                     print(f"[SERVER] Peer {peer} FAILED (No heartbeat detected).")
-                    # Later: trigger recovery logic from Section 2.5
+
                     del heartbeat_table[peer]
 
+                    handle_peer_failure(peer, sock)
+
         time.sleep(5)
+
+
+def handle_peer_failure(dead_peer, sock):
+    print(f"[SERVER] Handling failure of {dead_peer}...")
+
+    # For each file that used the dead peer
+    for filename, entry_list in backup_table.items():
+
+        # Find entries belonging to dead peer
+        lost_entries = [e for e in entry_list if e["peer"] == dead_peer]
+        if not lost_entries:
+            continue
+
+        print(f"[SERVER] Peer {dead_peer} had a replica of {filename}")
+
+        # Remove failed peer from backup list
+        backup_table[filename] = [e for e in entry_list if e["peer"] != dead_peer]
+
+        # Pick a source replica (any remaining peer)
+        if len(backup_table[filename]) == 0:
+            print(f"[SERVER] WARNING: {filename} now has 0 replicas!")
+            continue
+
+        source_entry = backup_table[filename][0]    # any surviving replica
+
+        # Select new target peer
+        existing = {e["peer"] for e in backup_table[filename]}
+        new_target = None
+        for p in peers.keys():
+            if p not in existing and p != dead_peer:
+                new_target = p
+                break
+
+        if not new_target:
+            print(f"[SERVER] No peer available for replication of {filename}")
+            continue
+
+        # Send replication request
+        send_replicate_request(filename, source_entry, new_target, sock)
+
+
+def choose_new_target_peer(exclude):
+    for p in peers.keys():
+        if p not in exclude:
+            return p
+    return None
+
+def send_replicate_request(filename, source_entry, target_peer, sock):
+    """
+    Creates REPLICATE_REQ message:
+    REPLICATE_REQ rq filename owner sourcePeer sourceIP sourceTCP
+    """
+    rq = 0  # no tracking needed for now
+    owner = source_entry["owner"]
+    source_peer = source_entry["peer"]
+    source_ip = source_entry["ip"]
+    source_tcp = source_entry["tcp"]
+
+    msg = f"REPLICATE_REQ {rq} {filename} {owner} {source_peer} {source_ip} {source_tcp}"
+
+    target_info = peers[target_peer]
+    target_addr = (target_info["IP"], int(target_info["UDP_Port"]))
+
+    print(f"[SERVER] Sending replication request to {target_peer}: {msg}")
+    sock.sendto(msg.encode(), target_addr)
 
 def handleRestoreRequest(msg, addr, sock):
     if len(msg) != 3:
@@ -176,14 +254,44 @@ def handleRestoreRequest(msg, addr, sock):
 
     _, rq, filename = msg
 
-    # TODO: Replace this with your real table that tracks chunks
-    if filename not in backup_table:
+    if filename not in backup_table or len(backup_table[filename]) == 0:
         reply = f"RESTORE-DENIED {rq} File_Not_Found"
-    else:
-        peer_list = backup_table[filename]
-        reply = f"RESTORE_PLAN {rq} {filename} {peer_list}"
+        sock.sendto(reply.encode(), addr)
+        return
 
+    peer_entries = []
+    for entry in backup_table[filename]:
+        peer_name = entry["peer"]
+        tcp_port = entry["tcp"]
+        peer_entries.append(f"{peer_name}:{tcp_port}")
+
+    peer_list_str = ",".join(peer_entries)
+
+    reply = f"RESTORE_PLAN {rq} {filename} {peer_list_str}"
     sock.sendto(reply.encode(), addr)
+
+def handleReplicateDone(msg, addr, sock):
+    print("[SERVER] Received replication confirmation:", msg)
+
+    if len(msg) != 5:
+        return
+
+    _, rq, filename, owner, peer = msg
+
+    # Update backup table
+    if filename not in backup_table:
+        backup_table[filename] = []
+
+    entry = {
+        "peer": peer,
+        "owner": owner,
+        "ip": peers[peer]["IP"],
+        "tcp": peers[peer]["TCP_Port"]
+    }
+
+    backup_table[filename].append(entry)
+
+    print(f"[SERVER] Updated backup table with new replica for {filename}: {entry}")
 
 def server_thread():
     #Main UDP server loop
@@ -192,7 +300,8 @@ def server_thread():
     print(f"[SERVER] Running on {SERVER_IP}:{SERVER_PORT}")
 
     # Start heartbeat monitoring
-    threading.Thread(target=heartbeat_watchdog, daemon=True).start()
+    threading.Thread(target=heartbeat_watchdog, args=(sock,), daemon=True).start()
+
 
     try:
         while True:
