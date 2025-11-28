@@ -30,6 +30,28 @@ def save_db():
     except Exception as e:
         print(f"[SERVER] Error saving database: {e}")
 
+def initServer():
+    with lock:
+        global peers
+        peerRemoveList = []
+        for peer in peers:
+            try:
+                with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+                    sock.settimeout(3.0)
+                    pingMsg = "PING"
+                    sock.sendto(pingMsg.encode(), (peers[peer]["IP"], int(peers[peer]["UDP_Port"])))
+                    data, _ = sock.recvfrom(1024)
+                    response = data.decode().strip()
+                    if response == "PONG":
+                        print(f"[SERVER] Peer {peer} is online.")
+            except socket.timeout:
+                print(f"[SERVER] Peer {peer} did not respond on time, therefore we remove it from the list of active peers.")
+                peerRemoveList.append(peer)
+                
+        for peer in peerRemoveList:
+            del peers[peer]
+    save_db()
+
 def handleRegistration(msg,addr,sock):
     
     print("\n[SERVER] : At handleRegistration\n")
@@ -50,6 +72,12 @@ def handleRegistration(msg,addr,sock):
        
         global peers
         if name in peers:
+            peers[name]["Role"] = role
+            peers[name]["IP"] = ip
+            peers[name]["UDP_Port"] = udp_port
+            peers[name]["TCP_Port"] = tcp_port
+            peers[name]["Storage"] = storage
+            save_db()
             reply = f"REGISTER-DENIED {rq} NameAlreadyInUse"
         else:
             peers[name] = {
@@ -111,16 +139,18 @@ def handleBackupRequest(msg, addr, sock):
     #Check for peers with storage role and sufficient space
     backupPeer={}
     strPeers=""
-    for peer, peer_info in peers.items():
-        print("[Server] - Checking peer: ",peer, ". Role is: ",peer_info["Role"]," and storage is: ", peer_info["Storage"])
-        if(peer_info["Role"] in ["storage", "both"] and peer != name and int(peer_info["Storage"]) >= int(size)):
-            print("[Server] - Peer ",peer," is eligible for backup")
-            backupPeer[peer]=f"{peer},{peer_info["IP"]},{peer_info["TCP_Port"]}|"
-            strPeers+=str(backupPeer[peer])
+    global peers
+    with lock:
+        for peer, peer_info in peers.items():
+            print("[Server] - Checking peer: ",peer, ". Role is: ",peer_info["Role"]," and storage is: ", peer_info["Storage"])
+            if(peer_info["Role"] in ["storage", "both"] and peer != name and int(peer_info["Storage"]) >= int(size)):
+                print("[Server] - Peer ",peer," is eligible for backup")
+                backupPeer[peer]=f"{peer},{peer_info["IP"]},{peer_info["TCP_Port"]}|"
+                strPeers+=str(backupPeer[peer])
 
-    print("[Server] - Printing the backupPeer: ",backupPeer)
-    #for peer in backupPeer:
-    #    sock.sendto(f"STORAGE_TASK RQ {filename} {name} {size}".encode(), (peers[peer]["IP"], int(peers[peer]["UDP_Port"])))
+        print("[Server] - Printing the backupPeer: ",backupPeer)
+        for peer in backupPeer:
+            sock.sendto(f"STORAGE_TASK RQ {filename} Owner:{name} {size}".encode(), (peers[peer]["IP"], int(peers[peer]["UDP_Port"])))
     #chunk_count =1
     #chunk_size =size//len(backupPeer)
 
@@ -208,7 +238,7 @@ def server_thread():
 
     # Start heartbeat monitoring
     threading.Thread(target=heartbeat_watchdog, daemon=True).start()
-
+    initServer()
     try:
         while True:
             data, addr = sock.recvfrom(1024)
@@ -218,7 +248,6 @@ def server_thread():
         sock.close()
         save_db()
         print("[SERVER] Database saved. Goodbye!")
-    print("[SERVER] Exited main loop.")
 
 
 if __name__ == "__main__":

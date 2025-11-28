@@ -1,30 +1,9 @@
 {
     "Moha": {
-        "Role": "Oubagha",
-        "IP": "127.0.0.1",
-        "UDP_Port": "50798",
-        "TCP_Port": "59116",
-        "Storage": "1000"
-    },
-    "Moh": {
         "Role": "both",
         "IP": "127.0.0.1",
-        "UDP_Port": "59868",
-        "TCP_Port": "55406",
-        "Storage": "1024"
-    },
-    "PeerB": {
-        "Role": "owner",
-        "IP": "127.0.0.1",
-        "UDP_Port": "61732",
-        "TCP_Port": "50514",
-        "Storage": "1024"
-    },
-    "Mohaa": {
-        "Role": "both",
-        "IP": "127.0.0.1",
-        "UDP_Port": "50700",
-        "TCP_Port": "65098",
+        "UDP_Port": "52861",
+        "TCP_Port": "50592",
         "Storage": "1024"
     }
 }

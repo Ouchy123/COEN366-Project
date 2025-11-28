@@ -37,9 +37,9 @@ class Peer:
         while self.running:
             try:
                 print("\nListening for UDP responses...")
-                data, _ = self.UDP_sock.recvfrom(1024)
+                data, adr = self.UDP_sock.recvfrom(1024)
                 message = data.decode().strip()
-                print(f"\n[CLIENT] Received: {message}")
+                print(f"\n[CLIENT - UDP] Received: {message}")
 
                 decoded = message.split()
 
@@ -51,6 +51,8 @@ class Peer:
                     print(f"[CLIENT] Restore plan received. Peers: {peer_list}")
 
                     self.download_chunks(filename, peer_list)
+                if(decoded[0] == "PING"):
+                    self.UDP_sock.sendto("PONG".encode(), adr)
 
             except socket.timeout:
                 continue
